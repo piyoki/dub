@@ -8,7 +8,7 @@ import {
 import { EU_COUNTRY_CODES } from "@dub/utils/src/constants/countries";
 import { geolocation, ipAddress } from "@vercel/functions";
 import { userAgent } from "next/server";
-import { clickCache } from "../api/links/click-cache";
+import { recordClickCache } from "../api/links/record-click-cache";
 import { ExpandedLink, transformLink } from "../api/links/utils/transform-link";
 import {
   detectBot,
@@ -38,7 +38,7 @@ export async function recordClick({
   skipRatelimit,
   timestamp,
   referrer,
-  shouldPassClickId,
+  shouldCacheClickId,
 }: {
   req: Request;
   clickId?: string;
@@ -51,7 +51,7 @@ export async function recordClick({
   skipRatelimit?: boolean;
   timestamp?: string;
   referrer?: string;
-  shouldPassClickId?: boolean;
+  shouldCacheClickId?: boolean;
 }) {
   if (!clickId) {
     return null;
@@ -69,10 +69,15 @@ export async function recordClick({
     return null;
   }
 
+  const ua = userAgent(req);
   const isBot = detectBot(req);
 
   // don't record clicks from bots
   if (isBot) {
+    console.log(`Click not recorded ❌ – Bot detected.`, {
+      ua,
+      isBot,
+    });
     return null;
   }
 
@@ -82,7 +87,7 @@ export async function recordClick({
   // we only need to do these if skipRatelimit is not true (we skip it in /api/track/:path endpoints)
   if (!skipRatelimit) {
     // here, we check if the clickId is cached in Redis within the last hour
-    const cachedClickId = await clickCache.get({ domain, key, ip });
+    const cachedClickId = await recordClickCache.get({ domain, key, ip });
     if (cachedClickId) {
       return null;
     }
@@ -106,7 +111,6 @@ export async function recordClick({
 
   const isEuCountry = geo.country && EU_COUNTRY_CODES.includes(geo.country);
 
-  const ua = userAgent(req);
   const referer = referrer || req.headers.get("referer");
 
   const identity_hash = await getIdentityHash(req);
@@ -161,13 +165,13 @@ export async function recordClick({
       },
     ).then((res) => res.json()),
 
-    // cache the click ID in Redis for 1 hour
-    clickCache.set({ domain, key, ip, clickId }),
+    // cache the recorded click for the corresponding IP address in Redis for 1 hour
+    recordClickCache.set({ domain, key, ip, clickId }),
 
-    // cache the click data for 5 mins
+    // cache the click ID and its corresponding click data in Redis for 5 mins
     // we're doing this because ingested click events are not available immediately in Tinybird
-    shouldPassClickId &&
-      redis.set(`clickCache:${clickId}`, clickData, {
+    shouldCacheClickId &&
+      redis.set(`clickIdCache:${clickId}`, clickData, {
         ex: 60 * 5,
       }),
 
@@ -196,8 +200,35 @@ export async function recordClick({
 
   // Find the rejected promises and log them
   if (response.some((result) => result.status === "rejected")) {
-    const errors = response.filter((result) => result.status === "rejected");
-    console.error("[Record click] - Rejected promises", errors);
+    const errors = response
+      .map((result, index) => {
+        if (result.status === "rejected") {
+          const operations = [
+            "Tinybird click event ingestion",
+            "Redis click cache set",
+            "Redis click ID cache set",
+            "Link clicks increment",
+            "Workspace usage increment",
+            "Workspace usage fetch",
+          ];
+          return {
+            operation: operations[index] || `Operation ${index}`,
+            error: result.reason,
+            errorString: JSON.stringify(result.reason, null, 2),
+          };
+        }
+        return null;
+      })
+      .filter((err): err is NonNullable<typeof err> => err !== null);
+
+    console.error("[Record click] - Rejected promises:", {
+      totalErrors: errors.length,
+      errors: errors.map((err) => ({
+        operation: err.operation,
+        error: err.error,
+        errorString: err.errorString,
+      })),
+    });
   }
 
   const [, , , , workspaceRows] = response;
