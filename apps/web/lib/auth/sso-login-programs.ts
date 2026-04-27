@@ -30,11 +30,15 @@ export const SSO_LOGIN_PROGRAMS = [
     // @see: https://developers.beehiiv.com/api-reference/oauth-users/identify
     mapProfile: (profile) => {
       const { email, first_name, last_name, profile_picture } = profile;
+      if (!email) {
+        // should never happen, but just in case
+        throw new Error("Beehiiv profile is missing an email address");
+      }
       return {
-        id: email || undefined,
-        name: `${first_name} ${last_name}`.trim(),
+        id: email,
+        name: [first_name, last_name].filter(Boolean).join(" ") || email,
         email,
-        image: profile_picture,
+        image: profile_picture ?? null,
       };
     },
   },
