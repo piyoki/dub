@@ -1,6 +1,6 @@
 import { prisma } from "@dub/prisma";
 import { Customer, Program, Project } from "@dub/prisma/client";
-import { nanoid } from "@dub/utils";
+import { chunk, nanoid } from "@dub/utils";
 import { createId } from "../api/create-id";
 import { updateLinkStatsForImporter } from "../api/links/update-link-stats-for-importer";
 import { syncPartnerLinksStats } from "../api/partners/sync-partner-links-stats";
@@ -61,18 +61,21 @@ export async function importCustomers(payload: RewardfulImportPayload) {
       },
     });
 
-    await Promise.allSettled(
-      referrals.map((referral) =>
-        createCustomer({
-          referral,
-          workspace,
-          program,
-          campaignIds,
-          importId,
-          existingCustomers,
-        }),
-      ),
-    );
+    const referrralChunks = chunk(referrals, 10);
+    for (const referralChunk of referrralChunks) {
+      await Promise.allSettled(
+        referralChunk.map((referral) =>
+          createCustomer({
+            referral,
+            workspace,
+            program,
+            campaignIds,
+            importId,
+            existingCustomers,
+          }),
+        ),
+      );
+    }
 
     currentPage++;
     processedBatches++;
@@ -175,9 +178,6 @@ async function createCustomer({
   );
 
   if (customerFoundStripeId) {
-    console.log(
-      `A customer already exists with Stripe customer ID ${referral.stripe_customer_id}`,
-    );
     return;
   }
 
@@ -186,9 +186,6 @@ async function createCustomer({
   );
 
   if (customerFoundExternalId) {
-    console.log(
-      `A customer already exists with external ID ${referral.customer.id}`,
-    );
     return;
   }
 
