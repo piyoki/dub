@@ -74,11 +74,14 @@ export class RewardfulApi {
     searchParams.append("page", page.toString());
     searchParams.append("limit", REWARDFUL_PAGE_LIMIT.toString());
 
-    const { data } = await this.fetch<{ data: RewardfulReferral[] }>(
-      `${this.baseUrl}/referrals?${searchParams.toString()}`,
-    );
+    const { data } = await this.fetch<{
+      data: Omit<RewardfulReferral, "id"> & { id: string | null }[];
+    }>(`${this.baseUrl}/referrals?${searchParams.toString()}`);
 
-    return data;
+    // for some reason the id can be null, so we need to filter out those referrals before returning the data
+    const filteredData = data.filter((referral) => referral.id !== null);
+
+    return filteredData as RewardfulReferral[];
   }
 
   async listCommissions({ page = 1 }: { page?: number }) {
