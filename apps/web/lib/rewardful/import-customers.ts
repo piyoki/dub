@@ -47,6 +47,7 @@ export async function importCustomers(payload: RewardfulImportPayload) {
         (r) => r.stripe_customer_id && r.stripe_customer_id.startsWith("cus_"),
       )
       .map((r) => r.stripe_customer_id!);
+
     const externalIds = referrals.map((r) => r.customer.id);
 
     const existingCustomers = await prisma.customer.findMany({
